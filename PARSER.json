@@ -1,0 +1,2348 @@
+{
+  "name": "AD_PARSER_CLAUDE",
+  "nodes": [
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.limit",
+      "typeVersion": 1,
+      "position": [
+        6288,
+        1424
+      ],
+      "id": "a4f3be4e-5103-4c9c-871f-b488a5d36250",
+      "name": "2"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.apify.com/v2/acts/XtaWFhbtfxyzqrFmd/runs",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "Authorization",
+              "value": "Bearer TOKEN"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n    \"count\": 24,\n    \"scrapeAdDetails\": false,\n    \"scrapePageAds.activeStatus\": \"all\",\n    \"urls\": [\n        {\n            \"url\": \"https://www.facebook.com/ads/library/?active_status={{ $json.Status }}&ad_type=all&country={{ $json.Country }}&q={{encodeURIComponent($json.Brand)}}\"\n        \n        }\n    ]\n}",
+        "options": {
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true
+            }
+          },
+          "timeout": 120000
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2672,
+        1696
+      ],
+      "id": "a9da01ab-47ac-43a5-a096-e6db3c5c6e0c",
+      "name": "TriggerApifyFBActor",
+      "retryOnFail": false,
+      "waitBetweenTries": 2000,
+      "maxTries": 3,
+      "alwaysOutputData": false,
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "6ddfc0d3-e8be-4fb2-a8e5-1ad62c6c4557",
+              "leftValue": "={{ $json.advertiser.body }}",
+              "rightValue": "Ads not found",
+              "operator": {
+                "type": "string",
+                "operation": "notEquals"
+              }
+            },
+            {
+              "id": "501471cd-57ec-4055-a3f2-5eb6d3d535ac",
+              "leftValue": "={{ $json.ad_started }}",
+              "rightValue": "N/A",
+              "operator": {
+                "type": "string",
+                "operation": "notEquals"
+              }
+            }
+          ],
+          "combinator": "or"
+        },
+        "looseTypeValidation": true,
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        4160,
+        1440
+      ],
+      "id": "a5bf6f01-7f5f-4485-9769-69f90b74991c",
+      "name": "BrandWithAds",
+      "alwaysOutputData": false
+    },
+    {
+      "parameters": {
+        "jsCode": "const transformedItems = [];\n\n// Get and NORMALIZE competitor brands ONCE\nconst competitorBrands = [];\nconst normalizedBrands = new Set(); // Use Set for O(1) lookups\n\ntry {\n  const parseCompetitorsItems = $('ParseCompetitors').all();\n  for (const item of parseCompetitorsItems) {\n    if (item.json?.Brand) {\n      const brand = item.json.Brand.trim();\n      competitorBrands.push(brand);\n      normalizedBrands.add(normalizeForMatching(brand)); // Pre-normalize\n    }\n  }\n} catch (error) {\n  // Handle error silently\n}\n\nfunction extractVideoUrl(advertiser) {\n  if (advertiser.videos && advertiser.videos.length > 0 && advertiser.videos[0].video_sd_url) {\n    return advertiser.videos[0].video_sd_url;\n  }\n  if (advertiser.cards && advertiser.cards.length > 0) {\n    for (const card of advertiser.cards) {\n      if (card.video_sd_url && card.video_sd_url !== '') {\n        return card.video_sd_url;\n      }\n    }\n  }\n  return '';\n}\n\nfunction extractTextForAnalysis(bodyText, cards) {\n  if (bodyText === '{{product.brand}}' || bodyText.includes('{{product.')) {\n    if (cards && cards.length > 0 && cards[0].body) {\n      return cards[0].body;\n    }\n  }\n  return bodyText;\n}\n\n// Aggressive normalization function\nfunction normalizeForMatching(text) {\n  return text\n    .toLowerCase()\n    .trim()\n    .replace(/\\s+/g, ' ')\n    .replace(/[^\\w\\s\\u0400-\\u04FF]/g, '')\n    .trim();\n}\n\n// Exact matching only - no partial matches\n// Exact matching only - no partial matches\nfunction matchesCompetitorBrand(pageName) {\n  if (normalizedBrands.size === 0) return true;\n  \n  const normalizedPageName = normalizeForMatching(pageName);\n  \n  console.log('Original page name:', pageName);\n  console.log('Normalized page name:', normalizedPageName);\n  console.log('Looking for match in:', Array.from(normalizedBrands));\n  console.log('Match result:', normalizedBrands.has(normalizedPageName));\n  \n  // Only exact match\n  return normalizedBrands.has(normalizedPageName);\n}\n\n// Check if data is already formatted\nfunction isAlreadyFormatted(item) {\n  return item.platforms && \n         Array.isArray(item.platforms) &&\n         item.advertiser && \n         typeof item.advertiser === 'object' &&\n         item.ad_started !== undefined;\n}\n\n// Helper to ensure array (avoids repeated checks)\nfunction ensureArray(value) {\n  return Array.isArray(value) ? value : [];\n}\n\nfor (const item of $input.all()) {\n  const data = item.json;\n  \n  // CASE 1: Data is already formatted\n  if (isAlreadyFormatted(data)) {\n    const pageName = data.advertiser?.page_name || 'Unknown';\n    \n    if (!matchesCompetitorBrand(pageName)) {\n      continue;\n    }\n    \n    // Ensure all media fields exist (optimized)\n    if (data.advertiser) {\n      data.advertiser.videos = ensureArray(data.advertiser.videos);\n      data.advertiser.images = ensureArray(data.advertiser.images);\n      data.advertiser.cards = ensureArray(data.advertiser.cards);\n    }\n    \n    transformedItems.push({ json: data });\n    continue;\n  }\n  \n  // CASE 2: Data needs transformation\n  if (!data?.body || !Array.isArray(data.body)) {\n    continue;\n  }\n \n  for (const bodyItem of data.body) {\n    if (bodyItem.error && (bodyItem.errorCode === \"ADS_NOT_FOUND\" || bodyItem.error.includes(\"not found\"))) {\n      const url = bodyItem.url || '';\n      const qParam = url.match(/q=([^&]+)/);\n      const competitorName = qParam ? decodeURIComponent(qParam[1]).replace(/\\+/g, ' ') : 'Unknown Competitor';\n \n      transformedItems.push({ \n        json: {\n          platforms: ['N/A'],\n          advertiser: {\n            page_profile_uri: '',\n            page_name: competitorName,\n            page_profile_picture_url: '',\n            body: 'Ads not found',\n            videos: [],\n            images: [],\n            cards: [],\n            link_url: '',\n            cta_text: '',\n            display_format: 'N/A'\n          },\n          ad_started: 'N/A'\n        }\n      });\n      continue;\n    }\n \n    if (!bodyItem.snapshot) {\n      continue;\n    }\n \n    const pageName = bodyItem.snapshot.page_name || 'Unknown';\n    \n    // Exact match only - no partial matching\n    if (!matchesCompetitorBrand(pageName)) {\n      continue;\n    }\n \n    const bodyText = bodyItem.snapshot.body?.text || '';\n    \n    if (!bodyText || bodyText === 'Ads not found') {\n      continue;\n    }\n \n    // Date formatting\n    const timestamp = bodyItem.start_date ? bodyItem.start_date * 1000 : null;\n    const date = timestamp ? new Date(timestamp) : new Date();\n    const formattedDate = date instanceof Date && !isNaN(date)\n      ? date.toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' })\n      : 'N/A';\n \n    // Optimized media cleaning with helper function\n    const cleanedVideos = ensureArray(bodyItem.snapshot.videos).map(video => ({\n      video_preview_image_url: video.video_preview_image_url || '',\n      video_sd_url: video.video_sd_url || ''\n    }));\n    \n    const cleanedImages = ensureArray(bodyItem.snapshot.images).map(image => ({\n      original_image_url: image.original_image_url || '',\n      resized_image_url: image.resized_image_url || ''\n    }));\n    \n    const cleanedCards = ensureArray(bodyItem.snapshot.cards).map(card => ({\n      body: card.body || '',\n      title: card.title || '',\n      link_url: card.link_url || '',\n      video_preview_image_url: card.video_preview_image_url || '',\n      video_sd_url: card.video_sd_url || '',\n      original_image_url: card.original_image_url || '',\n      resized_image_url: card.resized_image_url || ''\n    }));\n \n    transformedItems.push({ \n      json: {\n        platforms: bodyItem.publisher_platform || ['Unknown'],\n        advertiser: {\n          page_profile_uri: bodyItem.snapshot.page_profile_uri || '',\n          page_name: pageName,\n          page_profile_picture_url: bodyItem.snapshot.page_profile_picture_url || '',\n          body: bodyText,\n          videos: cleanedVideos,\n          images: cleanedImages,\n          cards: cleanedCards, \n          link_url: bodyItem.snapshot.link_url || '',\n          cta_text: bodyItem.snapshot.cta_text || '',\n          display_format: bodyItem.snapshot.display_format || '',\n          video_url: extractVideoUrl({ videos: cleanedVideos, cards: cleanedCards }),\n          text_for_analysis: extractTextForAnalysis(bodyText, cleanedCards)\n        },\n        ad_started: formattedDate\n      }\n    });\n  }\n}\n \nreturn transformedItems.length === 0 \n  ? [{ json: { message: \"No data found\" } }] \n  : transformedItems;"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3920,
+        1440
+      ],
+      "id": "2ae8ded9-b0d3-4754-83b0-454008a49faa",
+      "name": "Format&FilterData",
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "jsCode": "const allFrames = [];\nconst fbAds = $(\"BrandWithAds\").all();\nconst allVideos = $input.all();\nconst totalVideos = allVideos.length;\nconst cloudName = 'do0to2omr';\n\nallVideos.forEach((item, videoIndex) => {\n  const publicId = item.json.body.public_id;\n  const duration = Math.floor(item.json.body.duration);\n  \n  const competitorName = fbAds[videoIndex]?.json?.advertiser?.page_name || `Video_${videoIndex + 1}`;\n  const adStarted = fbAds[videoIndex]?.json?.ad_started || 'Unknown';\n  \n  // Extract 1 frame every 2 seconds\n  for (let time = 0; time < duration; time += 2) {\n    allFrames.push({\n      json: {\n        frame_url: `https://res.cloudinary.com/${cloudName}/video/upload/so_${time},f_jpg,q_auto,w_1024/${publicId}.jpg`,\n        time: time,\n        video_id: publicId,\n        competitor_name: competitorName,\n        ad_started: adStarted,\n        video_index: videoIndex + 1,\n        total_videos: totalVideos\n      }\n    });\n  }\n});\n\nreturn allFrames;"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        4784,
+        2224
+      ],
+      "id": "0bad6ef4-dd56-4005-8d76-d881a7561edf",
+      "name": "VideoFrame",
+      "alwaysOutputData": false
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.openai.com/v1/chat/completions",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "Bearer TOKEN"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "raw",
+        "rawContentType": "application/json",
+        "body": "={\n  \"model\": \"gpt-5-mini\",\n  \"messages\": [\n    {\n      \"role\": \"user\",\n      \"content\": [\n        {\n          \"type\": \"text\",\n          \"text\": {{ JSON.stringify($json.prompt) }}\n        },\n        {\n          \"type\": \"image_url\",\n          \"image_url\": {\n            \"url\": {{ JSON.stringify($json.frame_url) }}\n          }\n        }\n      ]\n    }\n  ]\n}",
+        "options": {
+          "batching": {
+            "batch": {
+              "batchSize": 32,
+              "batchInterval": 2700
+            }
+          },
+          "response": {
+            "response": {
+              "neverError": true
+            }
+          }
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        5264,
+        2352
+      ],
+      "id": "ec729a7a-b524-49ed-b890-fc2d16772a48",
+      "name": "AnalyzeFrame",
+      "alwaysOutputData": false,
+      "retryOnFail": false
+    },
+    {
+      "parameters": {
+        "mode": "combine",
+        "combineBy": "combineByPosition",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.2,
+      "position": [
+        5520,
+        2240
+      ],
+      "id": "f207b43e-7088-4a34-9f8b-2dbb591981dd",
+      "name": "Merge"
+    },
+    {
+      "parameters": {
+        "jsCode": "const allItems = $input.all();\nconst grouped = {};\n\n// ✅ Create lookup map ONCE (O(n) instead of O(n×m))\nconst brandWithAdsData = $('BrandWithAds').all();\nconst adsLookup = new Map();\n\nfor (const ad of brandWithAdsData) {\n  const key = `${ad.json.advertiser.page_name}|${ad.json.ad_started}`;\n  adsLookup.set(key, ad);\n}\n\n// Process frames\nfor (const item of allItems) {\n  const competitor_name = item.json.competitor_name;\n  const video_id = item.json.video_id;\n  const time = item.json.time;\n  const frame_url = item.json.frame_url;\n  const ad_started = item.json.ad_started;\n  \n  // Get AI analysis\n  let analysis;\n  if (item.json.choices?.[0]?.message) {\n    try {\n      analysis = JSON.parse(item.json.choices[0].message.content);\n    } catch (e) {\n      console.log('Failed to parse AI response');\n      continue;\n    }\n  } else {\n    continue;\n  }\n  \n  // Skip if missing required data\n  if (!competitor_name || !video_id) {\n    continue;\n  }\n  \n  // ✅ O(1) lookup instead of O(n) find\n  const lookupKey = `${competitor_name}|${ad_started}`;\n  const originalAd = adsLookup.get(lookupKey);\n  \n  // Initialize competitor if doesn't exist\n  if (!grouped[competitor_name]) {\n    grouped[competitor_name] = {};\n  }\n  \n  // Initialize video if doesn't exist\n  if (!grouped[competitor_name][video_id]) {\n    const advertiser = originalAd?.json?.advertiser;\n    \n    grouped[competitor_name][video_id] = {\n      competitor_name: competitor_name,\n      video_id: video_id,\n      ad_started: ad_started,\n      body: advertiser?.body || null,\n      page_profile_uri: advertiser?.page_profile_uri || null,\n      video_sd_url: advertiser?.videos?.[0]?.video_sd_url || null,\n      frames: []\n    };\n  }\n  \n  // Combine metadata with AI analysis\n  grouped[competitor_name][video_id].frames.push({\n    time: time,\n    frame_url: frame_url,\n    ...analysis\n  });\n}\n\n// Convert to array output\nconst output = [];\nfor (const competitor in grouped) {\n  for (const video in grouped[competitor]) {\n    grouped[competitor][video].frames.sort((a, b) => a.time - b.time);\n    \n    output.push({\n      json: grouped[competitor][video]\n    });\n  }\n}\n\nreturn output;"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        5712,
+        2240
+      ],
+      "id": "3c313a13-e75c-499b-94c3-dae2b0c0ab26",
+      "name": "GroupFrames"
+    },
+    {
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "loose",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.body.data.status === 'SUCCEEDED' && $input.all().filter(item => item.json.body.data.status === 'SUCCEEDED').length === $('ParseCompetitors').first().json.totalExpected }}",
+                    "rightValue": "SUCCEEDED",
+                    "operator": {
+                      "type": "boolean",
+                      "operation": "true",
+                      "singleValue": true
+                    },
+                    "id": "e980e3d5-3193-4cc8-beab-f4eaab7c2f14"
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "SUCCEEDED"
+            }
+          ]
+        },
+        "looseTypeValidation": true,
+        "options": {
+          "fallbackOutput": "extra"
+        }
+      },
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.2,
+      "position": [
+        3312,
+        1680
+      ],
+      "id": "c93a057e-2295-486a-b152-db9a50a793e7",
+      "name": "Switch"
+    },
+    {
+      "parameters": {
+        "jsCode": "const statusCode = $input.first()?.json?.statusCode || 'Unknown';\nconst errorBody = $input.first()?.json?.body || 'No response body';\nconst headers = $input.first()?.json?.headers || {};\n\nreturn [{\n  json: {\n    statusCode: statusCode,\n    errorDetails: errorBody,\n    headers: headers,\n    node: \"TriggerApifyFBActor\",\n    inputData: $input.first()?.json || {},\n    timestamp: new Date().toISOString()\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2688,
+        1936
+      ],
+      "id": "de744775-b7c7-40b0-956a-97f9630d3bd9",
+      "name": "FailedTrigger"
+    },
+    {
+      "parameters": {
+        "jsCode": "const statusCode = $input.first()?.json?.statusCode || 'Unknown';\nconst errorBody = $input.first()?.json?.body || 'No response body';\nconst headers = $input.first()?.json?.headers || {};\n\nreturn [{\n  json: {\n    statusCode: statusCode,\n    errorDetails: errorBody,\n    headers: headers,\n    node: \"Switch\",\n    inputData: $input.first()?.json || {},\n    timestamp: new Date().toISOString()\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3584,
+        1632
+      ],
+      "id": "f9e303dd-196f-4967-8eb5-026f043ae8b6",
+      "name": "FailedActor",
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "jsCode": "const statusCode = $input.first()?.json?.statusCode || 'Unknown';\nconst errorBody = $input.first()?.json?.body || 'No response body';\nconst headers = $input.first()?.json?.headers || {};\n\nreturn [{\n  json: {\n    statusCode: statusCode,\n    errorDetails: errorBody,\n    headers: headers,\n    node: \"FetchFBAds\",\n    inputData: $input.first()?.json || {},\n    timestamp: new Date().toISOString()\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3920,
+        1632
+      ],
+      "id": "f03e45e5-6b65-400f-b48d-2ca57c5af054",
+      "name": "FailedFetch"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "e6924b2d-70d5-4e4d-8502-d21ba3b8811d",
+              "leftValue": "={{\n  $json.advertiser.display_format !== \"VIDEO\" && \n  (\n    (\n      $json.advertiser.images && \n      $json.advertiser.images.length > 0 && \n      $json.advertiser.images.some(img => \n        (img.original_image_url && img.original_image_url !== \"\") || \n        (img.resized_image_url && img.resized_image_url !== \"\")\n      )\n    ) || \n    (\n      $json.advertiser.cards && \n      $json.advertiser.cards.length > 0 && \n      $json.advertiser.cards.some(card => \n        (card.original_image_url && card.original_image_url !== \"\") || \n        (card.resized_image_url && card.resized_image_url !== \"\")\n      )\n    )\n  )\n}}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        4448,
+        1648
+      ],
+      "id": "535ba900-dbf5-4a19-967e-665350f066ad",
+      "name": "StaticPictures"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "851a9417-57ed-4c95-a34f-cadfe0ff0024",
+              "leftValue": "={{$json.advertiser.display_format === \"CAROUSEL\" || $json.advertiser.display_format === \"MULTI_IMAGES\"}}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "looseTypeValidation": true,
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        4400,
+        1424
+      ],
+      "id": "129a9d47-f6be-46bb-b229-78b21c20bae7",
+      "name": "Carousel&MultiImages"
+    },
+    {
+      "parameters": {
+        "jsCode": "return $input.all().map(item => ({\n  page_name: item.json.advertiser.page_name,\n  body: item.json.advertiser.body\n}));"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        4176,
+        1648
+      ],
+      "id": "d734a7ae-a2ee-43d6-a6dc-eedef4bf706c",
+      "name": "NoAds"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.openai.com/v1/chat/completions",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "TOKEN"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "raw",
+        "rawContentType": "application/json",
+        "body": "={{ $json }}",
+        "options": {
+          "batching": {
+            "batch": {
+              "batchSize": 5,
+              "batchInterval": 2500
+            }
+          }
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        5120,
+        1872
+      ],
+      "id": "ed1d704b-f87c-4c49-8258-0e094703bbaa",
+      "name": "AnalyzePicture",
+      "alwaysOutputData": false,
+      "retryOnFail": false
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.cloudinary.com/v1_1/do0to2omr/image/upload",
+        "sendBody": true,
+        "contentType": "multipart-form-data",
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "file",
+              "value": "={{ $json.advertiser.cards[0].original_image_url }}"
+            },
+            {
+              "name": "upload_preset",
+              "value": "ad_picture"
+            }
+          ]
+        },
+        "options": {
+          "batching": {
+            "batch": {
+              "batchSize": 40,
+              "batchInterval": 2500
+            }
+          },
+          "timeout": 50000
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        4688,
+        1888
+      ],
+      "id": "9e8289ca-b13b-4b3a-85c3-6dfdc03a4535",
+      "name": "CloudinaryPicture",
+      "alwaysOutputData": false,
+      "retryOnFail": false,
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "const prompt = `Ты — эксперт по таргетированной рекламе, креативу, психологии и продажам.\nТвоя задача — проанализировать рекламный креатив конкурента в формате карусели (carousel ads) в Facebook/Instagram. Делай выводы строго по фактам.\n\n1. Технический блок\n    • Количество карточек.\n    • Соотношение сторон и единый стиль у всех карточек.\n    • Качество изображений (резкость, контраст, читаемость текста).\n    • Первичный фокус в каждой карточке (люди, продукт, текст, фон).\n    • Оригинальность: сток/реальное фото/UGC/AI-генерация.\n\n2. Текст и визуал\n    • Наличие текста, его объём и читаемость.\n    • Расположение: F/Z-паттерн, баннер, заголовок сверху/снизу.\n    • Соответствие текстов в карточках общему copy объявления.\n    • Заголовки карточек: лаконичные или перегруженные.\n    • Если каталог: проверяем не связность, а логику сортировки (новинки, хиты, категория, цена).\n\n3. Кто/что в кадре\n    • Персонажи: пол, возраст, эмоции, действия.\n    • Продукт: один или ассортимент.\n    • Баланс: люди vs продукт vs текст.\n    • Известные личности/инфлюенсеры: фиксируем как «trust signal».\n    • Группы товаров: хаос или упорядоченный показ.\n    • Риски: сексуализация, дети в «взрослом» контексте, религиозные символы.\n\n4. Последовательность и структура\n    • Есть ли сквозная логика от первой до последней карточки.\n    • Первый слайд: выполняет ли роль «якоря» (скидка, бестселлер, категория, выгода).\n    • Удержание внимания: есть ли прогресс от карточки к карточке или они независимые.\n    • Если каталог: допустим случайный набор товаров, но фиксируем как факт и даём рекомендацию «можно усилить за счёт логики».\n\n5. Визуальный анализ\n    • Цветовая гамма и её эффект (доверие, энергия, премиум).\n    • Символы и метафоры.\n    • Композиция: иерархия элементов (главное и второстепенное).\n    • Контраст: выделяется ли главный элемент.\n    • Негативное пространство: есть «воздух» или перегруз.\n    • Брендинг: логотип, фирменные цвета, слоган.\n\n6. Маркетинг и психология\n    • Тип оффера: скидка, бонус, сервис, ассортимент.\n    • Стадия воронки: охват, прогрев, конверсия.\n    • Основные психологические крючки: эмоция, доверие, статус, юмор, FOMO.\n    • Приёмы: соцдоказ (отзывы, «5 звёзд»), urgency («осталось 3 шт.»), эксклюзивность.\n    • УТП: выражено визуально или отсутствует.\n    • Архетип карусели: каталог, история, гибрид. Анализ проводится в рамках выбранного архетипа.\n\n7. Продажи\n    • Value proposition: выгода для клиента.\n    • CTA: есть ли визуальный call-to-action, заметность, конкретика.\n    • Цены: есть или нет, поданы системно или хаотично.\n        ◦ Если цены отсутствуют → это допустимо в брендовой рекламе, но для ассортимента снижает прозрачность.\n        ◦ Если все товары по одной цене → достаточно указать один раз, но лучше закрепить на первом слайде.\n    • Финальный CTA:\n        ◦ Если есть → плюс (усиливает конверсию).\n        ◦ Если нет → не ошибка, особенно для каталога. Можно протестировать при падении эффективности.\n\n8. Метрики и прогноз\n    • Rotation insight: сколько дней крутится карусель (тест, сезонка, стабильный хит).\n    • Новизна: насколько подход свежий или типовой.\n        ◦ В холодном трафике новизна повышает CTR.\n        ◦ В ретаргете шаблонные каталоги работают лучше.\n    • Риск выгорания: оцениваем по динамике ассортимента. Если товары обновляются часто — низкий риск; если карточки одинаковые и статичные — возможна «баннерная слепота».\n\n9. Рекомендации\n    • Инлайн-пометки (короткие комментарии к карточкам).\n    • Общий список:\n        ◦ Must-have: читабельные цены/названия, ясный первый слайд, базовая консистентность.\n        ◦ Nice-to-have: финальный CTA, бейджи «хит/новинка», лёгкий соцдоказ.\n        ◦ Fatigue-lever: геймификация, прогрессивное раскрытие, смена подложек или стиля при падении результатов.\n\nКРИТИЧЕСКИ ВАЖНО: \nТвой ответ ДОЛЖЕН быть ТОЛЬКО валидным JSON объектом без какого-либо дополнительного текста.\nНЕ используй markdown форматирование с кодовыми блоками.\nНЕ добавляй текст до или после JSON.\nВсе ключи объектов должны быть на английском языке, значения на русском.\n\nПример структуры ответа:\n{\n  \"technical\": {\n    \"card_count\": 10,\n    \"aspect_ratio\": \"описание\",\n    \"quality\": \"описание\",\n    \"focus\": \"описание\",\n    \"originality\": \"описание\"\n  },\n  \"text_and_visual\": {\n    \"text_presence\": \"описание\",\n    \"layout\": \"описание\",\n    \"consistency\": \"описание\"\n  },\n  \"characters\": {\n    \"people\": \"описание\",\n    \"product\": \"описание\",\n    \"balance\": \"описание\"\n  },\n  \"sequence\": {\n    \"logic\": \"описание\",\n    \"first_slide\": \"описание\",\n    \"progression\": \"описание\"\n  },\n  \"visual_analysis\": {\n    \"colors\": \"описание\",\n    \"symbols\": \"описание\",\n    \"composition\": \"описание\",\n    \"branding\": \"описание\"\n  },\n  \"marketing\": {\n    \"offer_type\": \"описание\",\n    \"funnel_stage\": \"описание\",\n    \"hooks\": \"описание\",\n    \"usp\": \"описание\",\n    \"archetype\": \"описание\"\n  },\n  \"sales\": {\n    \"value_proposition\": \"описание\",\n    \"cta\": \"описание\",\n    \"pricing\": \"описание\"\n  },\n  \"metrics\": {\n    \"rotation\": \"описание\",\n    \"novelty\": \"описание\",\n    \"fatigue_risk\": \"описание\"\n  },\n  \"recommendations\": {\n    \"must_have\": [\"пункт1\", \"пункт2\"],\n    \"nice_to_have\": [\"пункт1\", \"пункт2\"],\n    \"fatigue_lever\": [\"пункт1\", \"пункт2\"]\n  }\n}\n`;\n\n// Get the current ad with all its images\nconst currentAd = $input.item.json;\n\n// Start building the content array for OpenAI\nconst content = [\n  {\n    type: \"text\",\n    text: prompt\n  },\n  {\n    type: \"text\",\n    text: `Анализируемая реклама:\nРекламодатель: ${currentAd.advertiser_name}\nПлатформы: ${currentAd.platforms ? currentAd.platforms.join(', ') : 'Не указано'}\nФормат: ${currentAd.display_format}\nКоличество изображений: ${currentAd.total_images}\nТекст объявления: ${currentAd.body}\nCTA: ${currentAd.cta_text}\nДата запуска: ${currentAd.ad_started}\nID рекламы: ${currentAd.ad_id}`\n  }\n];\n\n// Add all images from this carousel in correct order\ncurrentAd.images.forEach((image, index) => {\n  content.push({\n    type: \"image_url\",\n    image_url: {\n      url: image.secure_url,\n      detail: \"high\" // For better image analysis\n    }\n  });\n  \n  // Add image metadata for context\n  content.push({\n    type: \"text\",\n    text: `Карточка ${index + 1}/${currentAd.total_images} (тип: ${image.type})`\n  });\n});\n\n// Return the complete OpenAI API request\nreturn {\n  model: \"gpt-4o-mini\",\n  messages: [\n    {\n      role: \"user\",\n      content: content\n    }\n  ]\n};"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        5728,
+        1520
+      ],
+      "id": "5db07a99-97b7-4cb1-8510-9bc9649458ba",
+      "name": "PromptFotCarousel"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.openai.com/v1/chat/completions",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "token"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "raw",
+        "rawContentType": "application/json",
+        "body": "={{ $json }}",
+        "options": {
+          "batching": {
+            "batch": {
+              "batchSize": 8,
+              "batchInterval": 2000
+            }
+          }
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        5920,
+        1520
+      ],
+      "id": "b755e9f7-db22-4dba-a378-4aedc2ffc777",
+      "name": "AnalyzeCarousel",
+      "alwaysOutputData": false,
+      "retryOnFail": false
+    },
+    {
+      "parameters": {
+        "jsCode": "const groupedAds = {};\n\n// Process all items from the Code node (40 images with Cloudinary URLs)\nfor (const item of $input.all()) {\n  const data = item.json;\n  const adId = data.ad_id;\n  \n  // Initialize ad group if it doesn't exist\n  if (!groupedAds[adId]) {\n    groupedAds[adId] = {\n      ad_id: adId,\n      advertiser_name: data.advertiser_name,\n      ad_started: data.ad_started,\n      platforms: data.platforms,\n      display_format: data.display_format,\n      body: data.body,\n      cta_text: data.cta_text,\n      link_url: data.link_url,\n      total_images: data.total_images,\n      images: []\n    };\n  }\n  \n  // Add the processed image with Cloudinary URL to the correct ad\n  groupedAds[adId].images.push({\n    original_url: data.original_url,\n    secure_url: data.secure_url,\n    public_id: data.public_id,\n    index: data.index,\n    type: data.type,\n    width: data.width,\n    height: data.height,\n    format: data.format\n  });\n}\n\n// Process each ad to ensure we only have 10 unique images\nObject.values(groupedAds).forEach(ad => {\n  // Remove duplicate images based on secure_url\n  const uniqueImages = [];\n  const seenUrls = new Set();\n  \n  for (const img of ad.images) {\n    if (!seenUrls.has(img.secure_url)) {\n      seenUrls.add(img.secure_url);\n      uniqueImages.push(img);\n    }\n  }\n  \n  // Update the images array with unique images only\n  ad.images = uniqueImages;\n  \n  // Sort images by index to maintain carousel order\n  ad.images.sort((a, b) => {\n    // If indices are the same, sort by secure_url to ensure consistent ordering\n    if (a.index === b.index) {\n      return a.secure_url.localeCompare(b.secure_url);\n    }\n    return a.index - b.index;\n  });\n  \n  // Take only the first 10 images if we still have more\n  if (ad.images.length > 10) {\n    ad.images = ad.images.slice(0, 10);\n  }\n  \n  // Update the total_images count to reflect actual count\n  ad.total_images = ad.images.length;\n});\n\n// Return array of complete ads with their correct images\n// Should return 2 items: 1 Facebook ad and 1 Instagram ad, each with 10 images\nreturn Object.values(groupedAds).map(ad => ({ json: ad }));"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        5520,
+        1520
+      ],
+      "id": "1dd492fc-61dd-4053-b61d-d95925ca1507",
+      "name": "Regroup"
+    },
+    {
+      "parameters": {
+        "jsCode": "const results = [];\n\n// Process all grouped ads from Node 1\nfor (const item of $input.all()) {\n  const adData = item.json;\n  \n  // Create one output item per image for Cloudinary upload\n  // But keep the ad context with each image\n  for (const imageData of adData.images) {\n    results.push({\n      ad_id: adData.ad_id,\n      advertiser_name: adData.advertiser_name,\n      ad_started: adData.ad_started,\n      platforms: adData.platforms,\n      display_format: adData.display_format,\n      body: adData.body,\n      cta_text: adData.cta_text,\n      link_url: adData.link_url,\n      total_images: adData.total_images,\n      // Individual image data for Cloudinary\n      original_url: imageData.original_url,\n      index: imageData.index,\n      type: imageData.type\n    });\n  }\n}\n\n// Wrap each item in a json object to avoid reserved key conflicts\nreturn results.map(item => ({ json: item }));"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        4928,
+        1520
+      ],
+      "id": "c8f4c91e-7d13-4014-9ab7-4d9ed7007caf",
+      "name": "SplitForUpload"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.cloudinary.com/v1_1/do0to2omr/image/upload",
+        "sendBody": true,
+        "contentType": "multipart-form-data",
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "file",
+              "value": "={{ $json.original_url }}"
+            },
+            {
+              "name": "upload_preset",
+              "value": "ad_picture"
+            }
+          ]
+        },
+        "options": {
+          "batching": {
+            "batch": {
+              "batchSize": 30,
+              "batchInterval": 2000
+            }
+          },
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true
+            }
+          },
+          "timeout": 60000
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        5120,
+        1520
+      ],
+      "id": "e067d002-b5e0-4b33-9bdc-9837848f5ad7",
+      "name": "UploadToCloudinary",
+      "alwaysOutputData": false,
+      "retryOnFail": false
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "const cloudinaryConfData = $('SplitForUpload').item.json;\n\n// Get the Cloudinary response from the current HTTP node output\nconst cloudinaryResponse = $input.item.json;\n\n// Merge both data sources\nreturn {\n  // Keep all original ad metadata from CloudinaryConf\n  ad_id: cloudinaryConfData.ad_id,\n  advertiser_name: cloudinaryConfData.advertiser_name,\n  ad_started: cloudinaryConfData.ad_started,\n  platforms: cloudinaryConfData.platforms,\n  display_format: cloudinaryConfData.display_format,\n  body: cloudinaryConfData.body,\n  cta_text: cloudinaryConfData.cta_text,\n  link_url: cloudinaryConfData.link_url,\n  total_images: cloudinaryConfData.total_images,\n  \n  // Original image data\n  original_url: cloudinaryConfData.original_url,\n  index: cloudinaryConfData.index,\n  type: cloudinaryConfData.type,\n  \n  // Add Cloudinary processed image data\n  secure_url: cloudinaryResponse.body.secure_url,\n  public_id: cloudinaryResponse.body.public_id,\n  width: cloudinaryResponse.body.width,\n  height: cloudinaryResponse.body.height,\n  format: cloudinaryResponse.body.format\n};"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        5328,
+        1520
+      ],
+      "id": "5d735782-ac04-4951-85a9-46bf537e10bc",
+      "name": "MergeUploadResults"
+    },
+    {
+      "parameters": {
+        "jsCode": "\nconst results = [];\nconst adCounter = {};\n\nfor (const item of $input.all()) {\n  const advertiser = item.json.advertiser;\n  \n  // Create base ad_id\n  const baseAdId = `${advertiser.page_name}_${item.json.ad_started}_${item.json.platforms.join('_')}_${advertiser.display_format}`;\n  \n  // Track and increment counter for this base ad_id\n  if (!adCounter[baseAdId]) {\n    adCounter[baseAdId] = 0;\n  }\n  adCounter[baseAdId]++;\n  \n  // Add counter to make unique ad_id if there are duplicates\n  const adId = adCounter[baseAdId] > 1 ? `${baseAdId}_${adCounter[baseAdId]}` : baseAdId;\n  \n  const imageUrls = [];\n  \n  // Collect all image URLs from images array\n  if (advertiser.images && advertiser.images.length > 0) {\n    advertiser.images.forEach((img, index) => {\n      imageUrls.push({\n        original_url: img.original_image_url,\n        index: index,\n        type: 'image'\n      });\n    });\n  }\n  \n  // Collect all image URLs from cards array\n  if (advertiser.cards && advertiser.cards.length > 0) {\n    advertiser.cards.forEach((card, index) => {\n      if (card.original_image_url) {\n        imageUrls.push({\n          original_url: card.original_image_url,\n          index: index,\n          type: 'card'\n        });\n      }\n    });\n  }\n  \n  // Create one item per ad with all images included\n  if (imageUrls.length > 0) {\n    results.push({\n      ad_id: adId,\n      advertiser_name: advertiser.page_name,\n      ad_started: item.json.ad_started,\n      platforms: item.json.platforms,\n      display_format: advertiser.display_format,\n      body: advertiser.body,\n      cta_text: advertiser.cta_text,\n      link_url: advertiser.link_url,\n      total_images: imageUrls.length,\n      images: imageUrls\n    });\n  }\n}\n\n// Log the results for debugging\nconsole.log(`Grouped ${results.length} ads:`);\nresults.forEach(ad => {\n  console.log(`- ${ad.ad_id}: ${ad.images.length} images`);\n});\n\nreturn results;"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        4736,
+        1520
+      ],
+      "id": "217b1db9-ee5d-4c43-bf04-a2327c4a5979",
+      "name": "GroupAdCampaigns"
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "const item = $input.item.json;\n\nconst prompt = `РЕКЛАМОДАТЕЛЬ: ${item.advertiser.page_name}\n\nТы — эксперт по таргетированной рекламе, копирайтингу, психологии и продажам.\nТвоя задача — проанализировать рекламный текст конкурента в Facebook и вернуть детальный анализ.\n\nАНАЛИЗИРУЕМЫЙ ТЕКСТ:\n${item.advertiser.text_for_analysis || item.advertiser.body}\n\nИНСТРУКЦИЯ ПО АНАЛИЗУ:\n\n1. КОПИРАЙТИНГ\n   • Ясность оффера (понятно ли, что предлагают) - оценка от 0 до 10\n   • Конкретика (цифры, сроки, факты) - оценка от 0 до 10\n   • Простота языка (легко ли читается) - оценка от 0 до 10\n   • Tone of voice (дружеский, официальный, экспертный, дерзкий)\n   • Структура: есть ли логика «заголовок → выгода → доказательство → CTA» - оценка от 0 до 10\n   • Разделение оффера и УТП (оффер = выгода прямо сейчас, УТП = отличие бренда от других) - оценка от 0 до 10\n\n2. МАРКЕТИНГ\n   • Тип оффера (скидка, бонус, пробный период, демо, консультация и т.д.)\n   • Стадия воронки (охват, прогрев, конверсия, допродажа)\n   • Объяснение почему эта стадия воронки\n   • Согласованность основного текста, заголовка и описания - оценка от 0 до 10\n   • Оригинальность формулировок (generic или уникально) - оценка от 0 до 10\n   • Сезонность/актуальность (намёки на праздники, события, тренды) - оценка от 0 до 10\n   • Mini-SWOT анализ текста: сильные стороны, слабые стороны, возможности для усиления, угрозы/риски\n\n3. ПСИХОЛОГИЯ\n   • Основные драйверы: боль, мечта, страх потери, новизна, принадлежность\n   • Использованная структура подачи (например, AIDA, PAS, BAB, Pain-Claim-Gain)\n   • Hook phrase — насколько сильна первая строка - оценка от 0 до 10\n   • Storytelling — есть ли сюжет или метод-структура - оценка от 0 до 10\n   • Приёмы влияния: FOMO, социальное доказательство, авторитет, якорение, reciprocity и др.\n   • Тональность: как бренд «разговаривает» с клиентом\n\n4. ПРОДАЖИ\n   • Value proposition (зачем клиенту это прямо сейчас, чем полезно) - оценка от 0 до 10\n   • Сила CTA (глагол, ясность, согласованность с оффером) - оценка от 0 до 10\n   • Риск-реверс (гарантия, возврат, бесплатный тест) - оценка от 0 до 10\n   • Ценовая психология (odd pricing, «от…», зачёркнутые цены) - оценка от 0 до 10\n\n5. МЕТРИКИ И ПРОГНОЗ\n   • Rotation insight (сколько дней крутится реклама и что это значит: тест, сезонка, стабильный хит)\n   • Novelty (0–100) — насколько формулировки свежие или заезженные\n\n6. РЕКОМЕНДАЦИИ\n   • Инлайн-пометки к конкретным элементам текста (цитата из текста + комментарий)\n   • Quick wins - 3 рекомендации которые можно сделать за 1 день\n   • Tactical улучшения - 2 рекомендации которые можно реализовать за неделю\n   • Strategic идея - 1 рекомендация на квартал\n\nФОРМАТ ВЫВОДА:\n\nВерни результат СТРОГО в формате JSON со следующей структурой. НЕ добавляй никакого текста до или после JSON.\n\n{\n  \"advertiser\": \"название рекламодателя\",\n  \"analyzed_text\": \"полный текст который анализировался\",\n  \"copywriting\": {\n    \"offer_clarity\": {\"score\": 7, \"description\": \"подробное описание\"},\n    \"specificity\": {\"score\": 3, \"description\": \"подробное описание\"},\n    \"language_simplicity\": {\"score\": 9, \"description\": \"подробное описание\"},\n    \"tone_of_voice\": \"описание тона\",\n    \"structure\": {\"score\": 4, \"description\": \"подробное описание\"},\n    \"offer_usp_separation\": {\"score\": 2, \"description\": \"подробное описание\"}\n  },\n  \"marketing\": {\n    \"offer_type\": \"тип оффера\",\n    \"funnel_stage\": \"стадия воронки\",\n    \"funnel_reasoning\": \"объяснение почему эта стадия\",\n    \"consistency\": {\"score\": 7, \"description\": \"подробное описание\"},\n    \"originality\": {\"score\": 3, \"description\": \"подробное описание\"},\n    \"seasonality\": {\"score\": 0, \"description\": \"подробное описание\"},\n    \"mini_swot\": {\n      \"strengths\": \"описание сильных сторон\",\n      \"weaknesses\": \"описание слабых сторон\",\n      \"opportunities\": \"описание возможностей\",\n      \"threats\": \"описание угроз\"\n    }\n  },\n  \"psychology\": {\n    \"main_drivers\": \"описание основных драйверов\",\n    \"structure_used\": \"использованная структура\",\n    \"hook_phrase\": {\"score\": 5, \"description\": \"подробное описание\"},\n    \"storytelling\": {\"score\": 0, \"description\": \"подробное описание\"},\n    \"influence_techniques\": \"описание техник влияния\",\n    \"tonality\": \"описание тональности\"\n  },\n  \"sales\": {\n    \"value_proposition\": {\"score\": 4, \"description\": \"подробное описание\"},\n    \"cta_strength\": {\"score\": 6, \"description\": \"подробное описание\"},\n    \"risk_reversal\": {\"score\": 0, \"description\": \"подробное описание\"},\n    \"price_psychology\": {\"score\": 0, \"description\": \"подробное описание\"}\n  },\n  \"metrics\": {\n    \"rotation_insight\": \"описание инсайта\",\n    \"novelty\": 15\n  },\n  \"recommendations\": {\n    \"inline_notes\": [{\"quoted_text\": \"цитата из исходного текста\", \"comment\": \"комментарий к этой части\"}],\n    \"quick_wins\": [\"конкретная рекомендация 1\", \"конкретная рекомендация 2\", \"конкретная рекомендация 3\"],\n    \"tactical\": [\"конкретная рекомендация 1\", \"конкретная рекомендация 2\"],\n    \"strategic\": [\"конкретная рекомендация 1\"]\n  }\n}\n\nКРИТИЧНО ВАЖНО:\n- Верни ТОЛЬКО валидный JSON, без markdown блоков, без текста \"json\" в начале\n- БЕЗ markdown форматирования\n- Используй двойные кавычки для всех строк\n- Все числовые оценки (score) - это числа от 0 до 10, не строки\n- Все массивы должны содержать минимум указанное количество элементов\n- Для inline_notes создай минимум 3-5 заметок к разным частям текста\n- Все описания должны быть конкретными и полезными, избегай общих фраз\n- Пиши на русском или украинском языке в зависимости от языка анализируемого текста`;\n\n// Return formatted request for Anthropic\nreturn {\n  json: {\n    model: \"claude-sonnet-4-5\",\n    max_tokens: 6000,\n    temperature: 0.2,\n    system: \"You are a JSON API. You MUST respond with ONLY raw JSON. NO markdown formatting. NO code blocks. NO ```json tags. NO explanatory text. Start your response with { and end with }. Your entire output must be valid, parseable JSON.\",\n    messages: [{\n      role: \"user\",\n      content: prompt\n    }]\n  }\n};"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        4608,
+        768
+      ],
+      "id": "6955d7f2-5318-4eac-9432-a1fc3b001729",
+      "name": "Body"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.anthropic.com/v1/messages",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "anthropicApi",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "content-type",
+              "value": "application/json"
+            },
+            {
+              "name": "anthropic-version",
+              "value": "2023-06-01"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ $json }}",
+        "options": {
+          "batching": {
+            "batch": {
+              "batchSize": 10,
+              "batchInterval": 2000
+            }
+          },
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true
+            }
+          }
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        4864,
+        864
+      ],
+      "id": "64ac3c3c-bfa4-4a10-886f-216b454c13d2",
+      "name": "ClaudeText",
+      "alwaysOutputData": false,
+      "credentials": {
+        "anthropicApi": {
+          "id": "ZLgaPnBzLNdWQCWT",
+          "name": "Anthropic account 2"
+        }
+      },
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "const adItem = $('Format&FilterData').item;\nconst aiItem = $input.item;\n\nif (!adItem.json?.advertiser) {\n  return { json: {} };\n}\n\nconst advertiser = adItem.json.advertiser;\nconst competitorName = advertiser.page_name || 'Unknown Competitor';\n\n// AI analysis is ALREADY PARSED by InforceJson - just use it directly\nconst parsedAnalysis = aiItem.json;\n\n// Extract videos from both videos array and cards array\nlet allVideos = [...(advertiser.videos || [])];\n\nif (advertiser.cards && Array.isArray(advertiser.cards)) {\n  advertiser.cards.forEach(card => {\n    if (card.video_sd_url && card.video_sd_url !== '') {\n      allVideos.push({\n        video_sd_url: card.video_sd_url,\n        video_preview_image_url: card.video_preview_image_url || ''\n      });\n    }\n  });\n}\n\n// Create combined item\nconst combinedItem = {\n  competitor_name: competitorName,\n  body: advertiser.body || '',\n  text_for_analysis: advertiser.text_for_analysis || advertiser.body || '',\n  ad_data: {\n    platforms: adItem.json.platforms || [],\n    page_profile_uri: advertiser.page_profile_uri || '',\n    page_profile_picture_url: advertiser.page_profile_picture_url || '',\n    ad_text: advertiser.text_for_analysis || advertiser.body || '',\n    images: advertiser.images || [],\n    cards: advertiser.cards || [],\n    videos: allVideos,\n    ad_started: adItem.json.ad_started || 'N/A'\n  },\n  ai_analysis: parsedAnalysis || {\n    error: 'No analysis available',\n    message: 'AI response was empty or could not be found'\n  }\n};\n\nreturn { json: combinedItem };"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        5520,
+        768
+      ],
+      "id": "6b21edbb-4174-4820-948a-bf1d7ea729d0",
+      "name": "FormatResponse",
+      "alwaysOutputData": false
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://handsome-freedom-production.up.railway.app/api/data",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "X-API-Key",
+              "value": "KEY"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{$json}}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        5760,
+        832
+      ],
+      "id": "bb82c3a1-2dcf-4340-b455-75d971e1243f",
+      "name": "SentTextAnalysis"
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "const context = {\n  competitor_name: $input.item.json.competitor_name,\n  ad_started: $input.item.json.ad_started,\n  video_id: $input.item.json.video_id,\n  time: $input.item.json.time,\n  frame_url: $input.item.json.frame_url\n};\n\n\nconst prompt = `Вы являетесь экспертом по видео рекламе и визуальному сторителлингу. Проанализируйте следующий кадр как часть креативного видео для рекламы на Facebook.\n\n\nВизуальный анализ:\n  Качество: Оцените разрешение, освещение и четкость (по шкале от 0 до 10).\n  Композиция: Рассмотрите центровку, правило третей и визуальный баланс (по шкале от 0 до 10).\n  Цветовая схема: Оцените гармоничность, контрастность и соответствие бренду.\n\nКонтентный анализ:\n  Главный объект: Определите, является ли это человек, продукт, текст или графика.\n    Если человек: Примерный возраст [лет], пол [М/Ж], эмоция, направление взгляда [в камеру/в сторону].\n    Если продукт: Процент размера в кадре, угол показа, видимость деталей.\n  Текст на экране: Наличие [есть/нет], читаемость [хорошая/плохая], краткое содержание.\n\nПсихологический анализ:\n  Эмоциональное воздействие: Определите конкретную эмоцию (по шкале от 0 до 10).\n  Внимание: Удерживает ли кадр взгляд [да/нет]? Объясните почему.\n  Доверие: Вызывает ли кадр доверие [да/нет]? Укажите причины.\n\nТехническая оценка:\n  Профессионализм производства: Аматорское, полупрофессиональное или профессиональное.\n  Стабильность: Наличие дрожания или стабильный кадр.\n  Фокус: Четкий, размытый или намеренно размытый фон.\n\nРоль кадра в контексте:\n  Определите роль данного кадра:\n  [ ] Хук (первые 3 секунды) – Что привлекает внимание?\n  [ ] Проблемная часть – Демонстрация проблемы.\n  [ ] Решение – Показ продукта/услуги.\n  [ ] Социальное доказательство – Отзывы/результаты.\n  [ ] Призыв к действию (CTA) – Призыв к действию.\n\nКраткая оценка кадра:\n  Сила кадра (0-10): [Оценка]\n  Главное сообщение: [Краткое описание]\n  Ключевой элемент: [Самый важный аспект кадра]\n  Предложение по улучшению: [Основное предложение]\n\nВАЖНО: Верните результат СТРОГО в формате JSON со структурой, точно соответствующей анализу:\n{\n  \"визуальный_анализ\": {\n    \"качество\": число от 0 до 10,\n    \"композиция\": число от 0 до 10,\n    \"цветовая_схема\": \"описание гармоничности, контрастности и соответствия бренду\"\n  },\n  \"контентный_анализ\": {\n    \"главный_объект\": \"человек\" или \"продукт\" или \"текст\" или \"графика\",\n    \"детали_человека\": {\n      \"возраст\": число или null,\n      \"пол\": \"М\" или \"Ж\" или null,\n      \"эмоция\": \"описание эмоции\" или null,\n      \"направление_взгляда\": \"в камеру\" или \"в сторону\" или null\n    },\n    \"детали_продукта\": {\n      \"процент_размера\": число от 0 до 100 или null,\n      \"угол_показа\": \"описание угла\" или null,\n      \"видимость_деталей\": \"описание видимости\" или null\n    },\n    \"текст_на_экране\": {\n      \"наличие\": true или false,\n      \"читаемость\": \"хорошая\" или \"плохая\" или null,\n      \"содержание\": \"краткое содержание\" или null\n    }\n  },\n  \"психологический_анализ\": {\n    \"эмоциональное_воздействие\": число от 0 до 10,\n    \"конкретная_эмоция\": \"название эмоции\",\n    \"удерживает_внимание\": true или false,\n    \"причина_внимания\": \"объяснение почему\",\n    \"вызывает_доверие\": true или false,\n    \"причина_доверия\": \"объяснение причин\"\n  },\n  \"техническая_оценка\": {\n    \"профессионализм\": \"аматорское\" или \"полупрофессиональное\" или \"профессиональное\",\n    \"стабильность\": \"стабильный кадр\" или \"наличие дрожания\",\n    \"фокус\": \"четкий\" или \"размытый\" или \"намеренно размытый фон\"\n  },\n  \"роль_кадра\": \"хук\" или \"проблема\" или \"решение\" или \"социальное_доказательство\" или \"призыв_к_действию\",\n  \"детали_хука\": \"что привлекает внимание\" или null,\n  \"краткая_оценка\": {\n    \"сила_кадра\": число от 0 до 10,\n    \"главное_сообщение\": \"краткое описание\",\n    \"ключевой_элемент\": \"самый важный аспект\",\n    \"предложение_улучшения\": \"основное предложение\"\n  }\n}\n\nВерните ТОЛЬКО валидный JSON без дополнительного текста или пояснений.`;\n\n\nreturn {\n  prompt: prompt,\n  frame_url: context.frame_url,\n  competitor_name: context.competitor_name,\n  ad_started: context.ad_started,\n  video_id: context.video_id,\n  time: context.time\n};"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        4976,
+        2224
+      ],
+      "id": "76f36e8c-f3fc-4cf7-81b4-41fb2fea8ee9",
+      "name": "VideoFramePrompt"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.cloudinary.com/v1_1/do0to2omr/video/upload",
+        "sendBody": true,
+        "contentType": "multipart-form-data",
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "file",
+              "value": "={{ $json.advertiser.video_url }}"
+            },
+            {
+              "name": "upload_preset",
+              "value": "ad_video"
+            }
+          ]
+        },
+        "options": {
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true
+            }
+          },
+          "timeout": 40000
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        4560,
+        2240
+      ],
+      "id": "0721f1ad-d159-4f18-8fb6-e7bda65bf338",
+      "name": "GetFrame",
+      "alwaysOutputData": false,
+      "retryOnFail": false,
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "const groupedData = $('GroupFrames').item;\nconst aiItem = $input.item;\n\n// Extract video metadata from the GroupFrames node\nconst competitorName = groupedData.json?.competitor_name || 'Unknown Competitor';\nconst videoId = groupedData.json?.video_id || 'N/A';\nconst adStarted = groupedData.json?.ad_started || 'N/A';\nconst videoUrl = groupedData.json?.video_sd_url || '';\nconst platforms = groupedData.json?.platforms || [];\nconst pageProfileUri = groupedData.json?.page_profile_uri || '';\nconst pageProfilePictureUrl = groupedData.json?.page_profile_picture_url || '';\nconst body = groupedData.json?.body || '';\n\n// Extract AI response text from multiple possible structures\nlet aiResponseText = null;\n\n// Primary structure: Direct content array (from AI Agent node)\nif (aiItem?.json?.content?.[0]?.text) {\n  aiResponseText = aiItem.json.content[0].text;\n}\n// Fallback 1: Nested in body.output\nelse if (aiItem?.json?.body?.output) {\n  const messageOutput = aiItem.json.body.output.find(item => item.type === 'message');\n  if (messageOutput?.content?.[0]?.text) {\n    aiResponseText = messageOutput.content[0].text;\n  }\n}\n// Fallback 2: Direct output array\nelse if (aiItem?.json?.output) {\n  const messageOutput = aiItem.json.output.find(item => item.type === 'message');\n  if (messageOutput?.content?.[0]?.text) {\n    aiResponseText = messageOutput.content[0].text;\n  }\n}\n// Fallback 3: Simple text field\nelse if (aiItem?.json?.text) {\n  aiResponseText = aiItem.json.text;\n}\n\n// Parse JSON from AI response\nlet parsedAnalysis = null;\n\nif (aiResponseText) {\n  try {\n    // Clean up potential markdown blocks or extra text\n    let cleanedText = aiResponseText.trim();\n    \n    // Remove markdown code blocks if present\n    cleanedText = cleanedText.replace(/^```json\\n?/i, '').replace(/^```\\n?/, '').replace(/```\\n?$/g, '').trim();\n    \n    // Try to find JSON object if there's extra text\n    const jsonMatch = cleanedText.match(/\\{[\\s\\S]*\\}/);\n    if (jsonMatch) {\n      cleanedText = jsonMatch[0];\n    }\n    \n    // Parse the JSON\n    parsedAnalysis = JSON.parse(cleanedText);\n    \n    // Remove duplicate fields from ai_analysis\n    if (parsedAnalysis) {\n      delete parsedAnalysis.advertiser;\n      delete parsedAnalysis.video_id;\n      delete parsedAnalysis.ad_started;\n    }\n    \n  } catch (e) {\n    // If parsing fails, return error info\n    console.error('JSON parsing error:', e.message);\n    parsedAnalysis = {\n      error: 'Failed to parse AI response',\n      error_message: e.message,\n      raw_response: aiResponseText.substring(0, 500)\n    };\n  }\n}\n\n// Create combined item for video analysis\nconst combinedItem = {\n  competitor_name: competitorName,\n  content_type: 'video',\n  body: body,\n  video_data: {\n    video_id: videoId,\n    video_url: videoUrl,\n    ad_started: adStarted,\n    platforms: platforms,\n    page_profile_uri: pageProfileUri,\n    page_profile_picture_url: pageProfilePictureUrl\n  },\n  ai_analysis: parsedAnalysis || {\n    error: 'No video analysis available',\n    message: 'AI response was empty or could not be found'\n  }\n};\n\nreturn { json: combinedItem };"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        6320,
+        2224
+      ],
+      "id": "a753669c-ea59-4d2b-81c0-29f7db906f21",
+      "name": "Format"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://handsome-freedom-production.up.railway.app/api/data",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{$json}}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        6496,
+        2304
+      ],
+      "id": "b9eb0fb2-0cc7-4ce1-a391-93635ce408b3",
+      "name": "SendVideoAnalysis"
+    },
+    {
+      "parameters": {
+        "url": "=https://api.apify.com/v2/actor-runs/{{ $json.body.data.id }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "token"
+            }
+          ]
+        },
+        "options": {
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true
+            }
+          },
+          "timeout": 170000
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2912,
+        1680
+      ],
+      "id": "a8fa3500-5597-497b-a5fc-64edcff4206a",
+      "name": "CheckState",
+      "retryOnFail": false,
+      "waitBetweenTries": 2000
+    },
+    {
+      "parameters": {
+        "amount": 6
+      },
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [
+        3120,
+        1680
+      ],
+      "id": "074eaafb-cada-4981-b807-bdb7fb1ccdae",
+      "name": "Poll",
+      "webhookId": "40bb6ad3-7a49-4aef-86a8-ee1098e3f32c",
+      "alwaysOutputData": false
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "const prompt = `\n**Ты — эксперт по таргетированной рекламе, креативу, психологии и продажам.** Твоя задача — проанализировать рекламное изображение конкурента (Facebook). Делай выводы строго по фактам.\n\n**1. Технический блок**\n* Формат: соотношение сторон, нативность для плейсмента (Feed, Stories, Reels).\n* Качество: резкость, контраст, артефакты.\n* Оригинальность: сток/реальное фото/UGC/AI-генерация.\n* Первичный фокус: что первым привлекает внимание (человек, продукт, текст, фон).\n\n**2. Текст в картинке**\n* Наличие текста и его объём (минимум/средне/перегруз).\n* Читаемость: размер, контраст, шрифт.\n* Расположение: F-паттерн, Z-паттерн, центр, баннер.\n* Соответствие тексту в объявлении: усиливает или дублирует copy.\n\n**3. Кто/что в кадре**\n* Персонажи: пол, возраст, роль (герой, эксперт, клиент, инфлюенсер).\n* Эмоции и действия: улыбка, серьёзность, демонстрация продукта, взгляд в камеру/в сторону.\n* Одежда/стиль: повседневный, деловой, спортивный, сексуализированный.\n* Известные личности: фиксировать, если это звезда/блогер/эксперт (trust signal).\n* Группы товаров: один продукт или ассортимент, что выделено главным.\n* Риски: чрезмерная сексуализация, дети в «взрослом» контексте, религиозные символы.\n* Баланс: люди vs продукт vs текст.\n\n**4. Визуальный анализ**\n* Цветовая гамма и психологический эффект (доверие, энергия, премиум).\n* Символы и метафоры: культурные/ассоциативные образы.\n* Композиция: иерархия элементов (главное/второстепенное).\n* Контраст: выделен ли главный элемент или теряется.\n* Негативное пространство: есть воздух или картинка перегружена.\n* Брендинг: логотип, фирменные цвета, слоган, узнаваемость.\n\n**5. Маркетинг и психология**\n* Тип оффера: скидка, бонус, демо, сервис.\n* Стадия воронки: охват, прогрев, конверсия.\n* Основной психологический крючок: эмоция, доверие, статус, юмор, страх упущенного.\n* Приёмы: соцдоказательство (отзывы, «5 звёзд»), urgency (таймер, «осталось 3 шт.»), эксклюзивность.\n* Визуальный стиль: серьёзный/юмористический/UGC.\n* УТП: выражено визуально или отсутствует.\n\n**6. Продажи**\n* Value proposition: видно ли, что получает клиент.\n* CTA: есть ли визуальный call-to-action (кнопка/надпись), заметность.\n* Ценовые элементы: скидка, зачёркнутая цена, «от…».\n* Контраст CTA: выделяется или теряется на фоне.\n\n**7. Метрики и прогноз**\n* Rotation insight: сколько дней крутится креатив и что это значит (тест, сезонка, стабильный хит).\n* Novelty (0–100): насколько изображение свежее или типовое (сток/шаблон/мем/оригинал).\n\n**8. Рекомендации**\n* Инлайн-пометки (коротко по каждому элементу: текст, персонажи, CTA).\n* Общий список:\n   * 3 Quick wins (цвет, контраст, CTA, текст).\n   * 2 Tactical улучшения (другие персонажи, новый фон, тест альтернативного текста).\n   * 1 Strategic идея (смена визуального стиля, новый tone of voice).`;\n\n// Return the complete HTTP request body\nreturn {\n  model: \"gpt-5-mini\",\n  messages: [\n    {\n      role: \"user\",\n      content: [\n        {\n          type: \"text\",\n          text: prompt\n        },\n        {\n          type: \"image_url\",\n          image_url: {\n            url: $json.url\n          }\n        }\n      ]\n    }\n  ]\n};"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        4928,
+        1872
+      ],
+      "id": "1dcb28ab-b714-4c12-892b-30c4c85c4549",
+      "name": "PicturePrompt"
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "const videoData = $input.item.json;\n\nconst frameAnalyses = videoData.frames\n  .map((frame, index) => `\\n--- КАДР ${index} ---\\n${JSON.stringify(frame, null, 2)}`)\n  .join('\\n');\n\nconst prompt = `РЕКЛАМОДАТЕЛЬ: ${videoData.competitor_name}\nID ВИДЕО: ${videoData.video_id}\nДАТА ЗАПУСКА: ${videoData.ad_started}\n\nТы — эксперт по рекламе. На вход ты получаешь:\n* Метаданные видео (бренд, страна, язык, плейсмент, длительность, дни ротации).\n* Массив анализов отдельных кадров/фреймов видео.\n\nЗадача: объединить их в единый анализ видео-креатива. Пиши только один отчёт, без повторов, опирайся на факты из всех анализов.\n\nАНАЛИЗЫ КАДРОВ:\n${frameAnalyses}\n\nСтруктура итогового отчёта:\n\n1. Технический блок\n   • Формат (вертикаль/горизонталь)\n   • Качество (резкость, контраст)\n   • Субтитры видны или нет\n\n2. Визуал и монтаж\n   • Что показывают в первые 3–5 секунд\n   • Темп (динамичный/спокойный)\n   • Разнообразие сцен\n   • Общий стиль (UGC, постановка, моушн)\n\n3. Кто в кадре\n   • Какие люди (пол, возраст, эмоции)\n   • Есть ли инфлюенсеры\n   • Как показан продукт (герой или фон)\n   • Видимость логотипа/бренд-цветов\n\n4. Маркетинг\n   • Тип оффера\n   • Стадия воронки\n   • Соответствие плейсменту\n\n5. Психология\n   • Драйверы (эмоции, доверие, статус, юмор, страх упущенного)\n   • Приёмы (FOMO, соцдоказ, эксклюзивность, авторитет)\n\n6. Продажи\n   • CTA (где и как показан)\n   • Ценовые сигналы\n   • Гарантии/риск-реверс\n\n7. Метрики/прогноз\n   • Rotation insight (по дням ротации: ${videoData.ad_started})\n   • Novelty (0–100: насколько решение свежее или шаблонное)\n\n8. Рекомендации\n   • 3 quick wins (сделать сразу)\n   • 2 тактические (протестировать)\n   • 1 стратегическая (на будущее)\n\n9. Итог\n   • Короткий вывод: что рекламирует конкурент, качество креатива, сильные и слабые стороны\n\nКлючевой акцент:\n- Игнорируй повторы (если в разных кадрах одно и то же)\n- Соединяй факты в целостное описание («в начале… потом… в конце…»)\n- Результат должен быть одним большим анализом видео, а не множеством фрагментов\n- Обращай внимание на хронологию кадров (кадр 0 = начало, последний кадр = конец)\n\nФОРМАТ ВЫВОДА:\n\nВерни результат СТРОГО в формате JSON со следующей структурой. НЕ добавляй никакого текста до или после JSON.\n\n{\n  \"advertiser\": \"название рекламодателя\",\n  \"video_id\": \"id видео\",\n  \"ad_started\": \"дата запуска\",\n  \"technical\": {\n    \"format\": \"описание формата\",\n    \"quality\": \"описание качества\",\n    \"subtitles\": \"описание субтитров\"\n  },\n  \"visual_and_editing\": {\n    \"hook_first_seconds\": \"что показывают в первые 3-5 секунд\",\n    \"tempo\": \"описание темпа\",\n    \"scene_variety\": \"описание разнообразия сцен\",\n    \"overall_style\": \"описание общего стиля\"\n  },\n  \"people_and_product\": {\n    \"people_description\": \"описание людей в кадре\",\n    \"influencers\": \"есть ли инфлюенсеры\",\n    \"product_presentation\": \"как показан продукт\",\n    \"branding_visibility\": \"видимость логотипа и бренд-цветов\"\n  },\n  \"marketing\": {\n    \"offer_type\": \"тип оффера\",\n    \"funnel_stage\": \"стадия воронки\",\n    \"placement_fit\": \"соответствие плейсменту\"\n  },\n  \"psychology\": {\n    \"drivers\": \"описание драйверов\",\n    \"techniques\": \"описание приёмов влияния\"\n  },\n  \"sales\": {\n    \"cta\": \"описание CTA\",\n    \"price_signals\": \"описание ценовых сигналов\",\n    \"risk_reversal\": \"описание гарантий\"\n  },\n  \"metrics\": {\n    \"rotation_insight\": \"анализ ротации\",\n    \"novelty\": 50\n  },\n  \"recommendations\": {\n    \"quick_wins\": [\n      \"рекомендация 1\",\n      \"рекомендация 2\",\n      \"рекомендация 3\"\n    ],\n    \"tactical\": [\n      \"рекомендация 1\",\n      \"рекомендация 2\"\n    ],\n    \"strategic\": [\n      \"рекомендация 1\"\n    ]\n  },\n  \"summary\": {\n    \"what_advertised\": \"что рекламирует конкурент\",\n    \"creative_quality\": \"оценка качества креатива\",\n    \"strengths\": \"сильные стороны\",\n    \"weaknesses\": \"слабые стороны\"\n  }\n}\n\nКРИТИЧНО ВАЖНО:\n- Верни ТОЛЬКО валидный JSON, без markdown блоков, без текста \"json\" в начале\n- Используй двойные кавычки для всех строк\n- Novelty - это число от 0 до 100, не строка\n- Все массивы должны содержать указанное количество элементов\n- Все описания должны быть конкретными и основанными на фактах из анализов кадров\n- Соединяй информацию из разных кадров в связное повествование\n- Избегай повторений одной и той же информации\n- Пиши на русском или украинском языке в зависимости от языка рекламодателя`;\n\nreturn {\n  json: {\n    model: \"claude-sonnet-4-5-20250929\",\n    max_tokens: 8000,\n    temperature: 0.2,\n    messages: [{\n      role: \"user\",\n      content: prompt\n    }]\n  }\n};"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        5904,
+        2240
+      ],
+      "id": "a471963c-2e82-4136-84b0-e710b382a79a",
+      "name": "VideoPrompt"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.anthropic.com/v1/messages",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "anthropicApi",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "content-type",
+              "value": "application/json"
+            },
+            {
+              "name": "anthropic-version",
+              "value": "2023-06-01"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ $json }}",
+        "options": {
+          "batching": {
+            "batch": {
+              "batchSize": 16,
+              "batchInterval": 3000
+            }
+          }
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        6096,
+        2240
+      ],
+      "id": "3b61e74e-7108-40ff-9594-4f35c0ac0d69",
+      "name": "VideoAnalisis",
+      "credentials": {
+        "anthropicApi": {
+          "id": "iqZIEahv6k4l2awI",
+          "name": "Anthropic account 3"
+        }
+      },
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://handsome-freedom-production.up.railway.app/api/notification",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-API-Key",
+              "value": "KEY"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"type\": \"analysis_started\",\n  \"message\": \"Textual analysis started\"\n}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        5088,
+        672
+      ],
+      "id": "b797c249-044f-4e78-82a1-bfd587929067",
+      "name": "TextualNotification"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "40eb441e-e207-46b8-9355-7ae81e18d18f",
+              "leftValue": "={{ $('ClaudeText').item.json.statusCode }}",
+              "rightValue": "200",
+              "operator": {
+                "type": "string",
+                "operation": "equals",
+                "name": "filter.operator.equals"
+              }
+            },
+            {
+              "id": "d22a3f22-70e9-41f3-b340-aad64b719cbd",
+              "leftValue": "={{ $('ClaudeText').item.json.statusCode }}",
+              "rightValue": "201",
+              "operator": {
+                "type": "string",
+                "operation": "equals",
+                "name": "filter.operator.equals"
+              }
+            }
+          ],
+          "combinator": "or"
+        },
+        "looseTypeValidation": true,
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        5264,
+        848
+      ],
+      "id": "8aecffdd-968f-4246-8ebc-610006341fa8",
+      "name": "success"
+    },
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.limit",
+      "typeVersion": 1,
+      "position": [
+        4864,
+        672
+      ],
+      "id": "7c7fa19f-26f3-4a83-ba0e-7e7818b34111",
+      "name": "1.2"
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "// Add a new field called 'myNewField' to the JSON of the item\n$input.item.json.myNewField = 1;\n\nreturn $input.item;"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        5648,
+        1024
+      ],
+      "id": "383743b4-3668-475c-aa34-2176163c4c4e",
+      "name": "failure"
+    },
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.limit",
+      "typeVersion": 1,
+      "position": [
+        5824,
+        1024
+      ],
+      "id": "85a74348-50d0-4fb9-b5d2-60718d62f444",
+      "name": "1.3"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://handsome-freedom-production.up.railway.app/api/notification",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-API-Key",
+              "value": "KEY"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"type\": \"ads presense\",\n  \"message\": \"{{ $json.body }}: {{ $json.page_name }}\"\n}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        4208,
+        1888
+      ],
+      "id": "b969b226-5819-426f-9607-15b85a2aa6b2",
+      "name": "NoAdsNotification"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://handsome-freedom-production.up.railway.app/api/notification",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-API-Key",
+              "value": "key"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"message\": \"Fetching ads\"\n}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        2480,
+        1536
+      ],
+      "id": "3009f92f-146a-4436-b39d-120f805691cd",
+      "name": "TriggerNotification"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://handsome-freedom-production.up.railway.app/api/notification",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-API-Key",
+              "value": "key"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"type\": \"error\",\n  \"message\": \"{{ $json.errorDetails.data.status }}\",\n  \"metadata\": {\n    \"status_code\": \"{{ $json.statusCode }}\",\n    \"error_type\": \"failed parser\"\n  }\n}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        3600,
+        1856
+      ],
+      "id": "aa6979e0-b57d-4402-a265-8be91db0b0b7",
+      "name": "ErroredActor"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://handsome-freedom-production.up.railway.app/api/notification",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-API-Key",
+              "value": "KEY"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"type\": \"error\",\n  \"message\": \"{{ $json.errorDetails }}\",\n  \"metadata\": {\n    \"status_code\": \"{{ $json.statusCode }}\",\n    \"error_type\": \"failed fetch\"\n  }\n}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        3936,
+        1888
+      ],
+      "id": "e3244609-ec1c-4554-a372-7981d9f047ce",
+      "name": "ErroredFetch"
+    },
+    {
+      "parameters": {
+        "url": "=https://api.apify.com/v2/datasets/{{ $json.body.data.defaultDatasetId }}/items",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "Bearer"
+            }
+          ]
+        },
+        "options": {
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true
+            }
+          },
+          "timeout": 150000
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        3664,
+        1456
+      ],
+      "id": "3a93a5f7-fadf-41ce-b01c-9e11c20ea1db",
+      "name": "FetchFBAds",
+      "retryOnFail": false,
+      "maxTries": 3,
+      "waitBetweenTries": 2000,
+      "alwaysOutputData": false,
+      "notesInFlow": false,
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "const aiItem = $input.item;\n\n// Extract Claude response text from multiple possible structures\nlet claudeResponseText = null;\n\n// Primary structure: Direct content array (from Claude API)\nif (aiItem?.json?.content?.[0]?.text) {\n  claudeResponseText = aiItem.json.content[0].text;\n}\n// Fallback 1: Nested in body.content\nelse if (aiItem?.json?.body?.content?.[0]?.text) {\n  claudeResponseText = aiItem.json.body.content[0].text;\n}\n// Fallback 2: Nested in body.output\nelse if (aiItem?.json?.body?.output) {\n  const messageOutput = aiItem.json.body.output.find(item => item.type === 'message');\n  if (messageOutput?.content?.[0]?.text) {\n    claudeResponseText = messageOutput.content[0].text;\n  }\n}\n// Fallback 3: Direct output array\nelse if (aiItem?.json?.output) {\n  const messageOutput = aiItem.json.output.find(item => item.type === 'message');\n  if (messageOutput?.content?.[0]?.text) {\n    claudeResponseText = messageOutput.content[0].text;\n  }\n}\n// Fallback 4: Simple text field\nelse if (aiItem?.json?.text) {\n  claudeResponseText = aiItem.json.text;\n}\n// Fallback 5: Direct body as string\nelse if (typeof aiItem?.json?.body === 'string') {\n  claudeResponseText = aiItem.json.body;\n}\n\nif (!claudeResponseText) {\n  throw new Error('Could not find Claude response in any expected location');\n}\n\n// Strip markdown code blocks\nlet cleanText = claudeResponseText\n  .replace(/```json\\n?/gi, '')\n  .replace(/```\\n?/g, '')\n  .trim();\n\n// Find the first opening brace\nconst startIndex = cleanText.indexOf('{');\nif (startIndex === -1) {\n  throw new Error('No JSON object found in response');\n}\n\n// Start from the opening brace\ncleanText = cleanText.substring(startIndex);\n\n// Try to find valid JSON by counting braces\nlet braceCount = 0;\nlet jsonEndIndex = -1;\n\nfor (let i = 0; i < cleanText.length; i++) {\n  if (cleanText[i] === '{') {\n    braceCount++;\n  } else if (cleanText[i] === '}') {\n    braceCount--;\n    if (braceCount === 0) {\n      jsonEndIndex = i + 1;\n      break;\n    }\n  }\n}\n\nif (jsonEndIndex === -1) {\n  throw new Error('Could not find complete JSON object');\n}\n\n// Extract just the JSON object\nconst jsonString = cleanText.substring(0, jsonEndIndex);\n\n// Parse and return\nconst parsedData = JSON.parse(jsonString);\n\nreturn {\n  json: parsedData\n};"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        5088,
+        848
+      ],
+      "id": "e6415d39-eb10-4aaa-ac94-0c40454c16e3",
+      "name": "InforceJson"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://handsome-freedom-production.up.railway.app/api/data",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "X-API-Key",
+              "value": "KEY"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{$json}}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        6288,
+        1616
+      ],
+      "id": "527590df-3227-4d95-9ae8-91bd0955ec3a",
+      "name": "SentMultiImageAnalisis"
+    },
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.limit",
+      "typeVersion": 1,
+      "position": [
+        5120,
+        1056
+      ],
+      "id": "a0036cdb-3a0e-4726-9376-db8327775314",
+      "name": "1.4"
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "\n$input.item.json.myNewField = 1;\n\nreturn $input.item;"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        4944,
+        1056
+      ],
+      "id": "ce27f9d0-ae87-4454-8734-fa643dd74682",
+      "name": "error"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://handsome-freedom-production.up.railway.app/api/notification",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-API-Key",
+              "value": "kEY"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"type\": \"error\",\n  \"message\": \"{{ $json.body.error.message }}\",\n  \"metadata\": {\n    \"status_code\": \"{{ $json.statusCode }}\",\n    \"error_type\": \"{{ $json.body.error.type }}\"\n  }\n}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        5312,
+        1056
+      ],
+      "id": "37944804-a1b9-4338-afe7-291b88935002",
+      "name": "AiFailedError"
+    },
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.limit",
+      "typeVersion": 1,
+      "position": [
+        5152,
+        2112
+      ],
+      "id": "611aeb04-c254-4c1f-b5d1-5492fbe416cb",
+      "name": "1.5"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://handsome-freedom-production.up.railway.app/api/notification",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-API-Key",
+              "value": "Key"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "{\n  \"type\": \"analysis_started\",\n  \"message\": \"video analysis started\"\n}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        5328,
+        2112
+      ],
+      "id": "d4eed401-26c5-49d2-b82c-26b0b7b1a544",
+      "name": "VideoNotification"
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "9b0a4f3f-0fcc-47cf-83e6-44472885f0ca",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [
+        2256,
+        1696
+      ],
+      "id": "a5bfad7e-795b-46e7-b883-3ed0442223e8",
+      "name": "Trigger1",
+      "webhookId": "9b0a4f3f-0fcc-47cf-83e6-44472885f0ca"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://handsome-freedom-production.up.railway.app/api/notification",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-API-Key",
+              "value": "Key"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"message\": \"Textual analysis finished\"\n}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        5952,
+        688
+      ],
+      "id": "874f7cc4-ce6d-43ee-b952-5e8a97d9dcce",
+      "name": "TextIsReady"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://handsome-freedom-production.up.railway.app/api/notification",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-API-Key",
+              "value": "Key"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"message\": \"video analysis finished\"\n}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        6672,
+        2144
+      ],
+      "id": "99fdfe72-8c9f-4b10-8a38-ce1ef7c29496",
+      "name": "VideoIsReady"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://handsome-freedom-production.up.railway.app/api/notification",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-API-Key",
+              "value": "Key"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"type\": \"analysis_started\",\n  \"message\": \"Carousel analysis complete\"\n}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        6464,
+        1424
+      ],
+      "id": "5bfaab46-a501-47f0-ab8c-b77881f65367",
+      "name": "ImagesAreReady"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://handsome-freedom-production.up.railway.app/api/notification",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-API-Key",
+              "value": "Key"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"type\" : \"image_analysis_starting\",\n  \"message\": \"Image analysis started\"\n}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        4928,
+        1712
+      ],
+      "id": "d48be448-7ab2-44f3-b3a9-f1c1e5ad2269",
+      "name": "ImageNotification"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://handsome-freedom-production.up.railway.app/api/notification",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-API-Key",
+              "value": "Key"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"type\": \"analysis_started\",\n  \"message\": \"image_analysis_complete\"\n}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        5520,
+        1776
+      ],
+      "id": "b596404b-7de2-40b7-aacd-f8ce60ef5c43",
+      "name": "ImageISReady"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://handsome-freedom-production.up.railway.app/api/data",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "X-API-Key",
+              "value": "Key"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{$json}}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        5520,
+        1968
+      ],
+      "id": "1348a1b3-93bb-4f50-bf32-4001bf310432",
+      "name": "SentImageAnalisis"
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "const regroupData = $('Regroup').item;\nconst aiItem = $input.item;\n\n// Extract carousel metadata from the Regroup node\nconst advertiserName = regroupData.json?.advertiser_name || 'Unknown Advertiser';\nconst adStarted = regroupData.json?.ad_started || 'N/A';\nconst platforms = regroupData.json?.platforms || [];\nconst displayFormat = regroupData.json?.display_format || '';\nconst body = regroupData.json?.body || '';\nconst ctaText = regroupData.json?.cta_text || '';\nconst linkUrl = regroupData.json?.link_url || '';\nconst totalImages = regroupData.json?.total_images || 0;\nconst images = regroupData.json?.images || [];\n\n// Extract AI response text from multiple possible structures\nlet aiResponseText = null;\n\n// Primary structure: Direct content array (from OpenAI node)\nif (aiItem?.json?.choices?.[0]?.message?.content) {\n  aiResponseText = aiItem.json.choices[0].message.content;\n}\n// Fallback 1: Direct content array\nelse if (aiItem?.json?.content?.[0]?.text) {\n  aiResponseText = aiItem.json.content[0].text;\n}\n// Fallback 2: Nested in body.output\nelse if (aiItem?.json?.body?.output) {\n  const messageOutput = aiItem.json.body.output.find(item => item.type === 'message');\n  if (messageOutput?.content?.[0]?.text) {\n    aiResponseText = messageOutput.content[0].text;\n  }\n}\n// Fallback 3: Direct output array\nelse if (aiItem?.json?.output) {\n  const messageOutput = aiItem.json.output.find(item => item.type === 'message');\n  if (messageOutput?.content?.[0]?.text) {\n    aiResponseText = messageOutput.content[0].text;\n  }\n}\n// Fallback 4: Simple text field\nelse if (aiItem?.json?.text) {\n  aiResponseText = aiItem.json.text;\n}\n\n// Parse JSON from AI response\nlet parsedAnalysis = null;\nif (aiResponseText) {\n  try {\n    // Clean up potential markdown blocks\n    let cleanedText = aiResponseText.trim();\n    cleanedText = cleanedText.replace(/```json\\n?/gi, '').replace(/```\\n?/g, '').trim();\n    \n    // Find the first opening brace\n    const startIndex = cleanedText.indexOf('{');\n    if (startIndex === -1) {\n      throw new Error('No JSON object found in response');\n    }\n    \n    // Start from the opening brace\n    cleanedText = cleanedText.substring(startIndex);\n    \n    // Count braces to find where JSON actually ends\n    let braceCount = 0;\n    let jsonEndIndex = -1;\n    \n    for (let i = 0; i < cleanedText.length; i++) {\n      if (cleanedText[i] === '{') {\n        braceCount++;\n      } else if (cleanedText[i] === '}') {\n        braceCount--;\n        if (braceCount === 0) {\n          jsonEndIndex = i + 1;\n          break;\n        }\n      }\n    }\n    \n    if (jsonEndIndex === -1) {\n      throw new Error('Could not find complete JSON object');\n    }\n    \n    // Extract only the valid JSON object\n    const jsonString = cleanedText.substring(0, jsonEndIndex);\n    \n    // Parse the JSON\n    parsedAnalysis = JSON.parse(jsonString);\n    \n  } catch (e) {\n    console.error('JSON parsing error:', e.message);\n    parsedAnalysis = {\n      error: 'Failed to parse AI response',\n      error_message: e.message,\n      raw_response: aiResponseText.substring(0, 500)\n    };\n  }\n}\n\n// Create combined item for carousel analysis\nconst combinedItem = {\n  advertiser_name: advertiserName,\n  content_type: 'carousel',\n  body: body,\n  carousel_data: {\n    ad_started: adStarted,\n    platforms: platforms,\n    display_format: displayFormat,\n    cta_text: ctaText,\n    link_url: linkUrl,\n    total_images: totalImages,\n    images: images\n  },\n  ai_analysis: parsedAnalysis || {\n    error: 'No carousel analysis available',\n    message: 'AI response was empty or could not be found'\n  }\n};\n\nreturn { json: combinedItem };"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        6112,
+        1520
+      ],
+      "id": "4d976c25-b435-434c-afa8-cbe87028d509",
+      "name": "FormatImages"
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "const adItem = $('Format&FilterData').item;\n  const aiItem = $input.item;\n\n  if (!adItem.json?.advertiser) {\n    return { json: {} };\n  }\n\n  const advertiser = adItem.json.advertiser;\n  const competitorName = advertiser.page_name || 'Unknown Competitor';\n\n  // AI analysis is ALREADY PARSED by InforceJson - just use it directly\n  const parsedAnalysis = aiItem.json;\n\n  // Extract videos from both videos array and cards array\n  let allVideos = [...(advertiser.videos || [])];\n\n  if (advertiser.cards && Array.isArray(advertiser.cards)) {\n    advertiser.cards.forEach(card => {\n      if (card.video_sd_url && card.video_sd_url !== '') {\n        allVideos.push({\n          video_sd_url: card.video_sd_url,\n          video_preview_image_url: card.video_preview_image_url || ''\n        });\n      }\n    });\n  }\n\n  // Create combined item\n  const combinedItem = {\n    competitor_name: competitorName,\n    content_type: 'image', // HARDCODE since this node only runs for images\n    body: advertiser.body || '',\n    text_for_analysis: advertiser.text_for_analysis || advertiser.body || '',\n    ad_data: {\n      platforms: adItem.json.platforms || [],\n      page_profile_uri: advertiser.page_profile_uri || '',\n      page_profile_picture_url: advertiser.page_profile_picture_url || '',\n      ad_text: advertiser.text_for_analysis || advertiser.body || '',\n      images: advertiser.images || [],\n      cards: advertiser.cards || [],\n      videos: allVideos,\n      ad_started: adItem.json.ad_started || 'N/A'\n    },\n    ai_analysis: parsedAnalysis || {\n      error: 'No analysis available',\n      message: 'AI response was empty or could not be found'\n    }\n  };\n\n  return { json: combinedItem };\n\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        5328,
+        1872
+      ],
+      "id": "d006a0b7-cc2f-4c99-9be4-00939af6d73d",
+      "name": "FormatImage"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://handsome-freedom-production.up.railway.app/api/notification",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-API-Key",
+              "value": "Key"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"type\" : \"image_analysis_starting\",\n  \"message\": \"carousel analysis started\"\n}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        4928,
+        1328
+      ],
+      "id": "bc75a27b-b32d-4e65-bf77-58e245c9f73b",
+      "name": "ImagesNotification"
+    },
+    {
+      "parameters": {
+        "jsCode": "const brandData = $json.body?.Brands || $json.Brands || [];\n\n// Ensure it's an array\nconst competitors = Array.isArray(brandData) ? brandData : [brandData];\n\n// Filter out empty values\nconst validCompetitors = competitors.filter(brand => brand && brand.trim());\n\n// Get the count\nconst totalExpected = validCompetitors.length;\n\n// Return competitors with ONLY the fields you need\nreturn validCompetitors.map(competitor => ({\n  json: {\n    Country: items[0].json.body.Country,\n    Status: items[0].json.body.Status,\n    submittedAt: items[0].json.body.submittedAt,\n    Brand: competitor.trim(),\n    totalExpected: totalExpected\n  }\n}));"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2480,
+        1696
+      ],
+      "id": "b2077626-f8f5-42dd-bdaa-d0176d126ac0",
+      "name": "ParseCompetitors",
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.limit",
+      "typeVersion": 1,
+      "position": [
+        4736,
+        1712
+      ],
+      "id": "5e4e6709-875e-4212-b6c1-37ace759f9f9",
+      "name": "1.6"
+    },
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.limit",
+      "typeVersion": 1,
+      "position": [
+        4736,
+        1328
+      ],
+      "id": "6cedccbd-a687-4f98-9df1-bfedaf488893",
+      "name": "1.7"
+    },
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.limit",
+      "typeVersion": 1,
+      "position": [
+        6496,
+        2144
+      ],
+      "id": "eba2c681-cce7-4da6-8578-359b2d91ced2",
+      "name": "1.8"
+    },
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.limit",
+      "typeVersion": 1,
+      "position": [
+        5760,
+        688
+      ],
+      "id": "d87ee969-d682-4a26-a328-04afe83ddc22",
+      "name": "1.9"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://handsome-freedom-production.up.railway.app/api/notification",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-API-Key",
+              "value": "Key"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"type\": \"error\",\n  \"message\": \"{{ $json.body.error.message }}\",\n  \"metadata\": {\n    \"status_code\": \"{{ $json.statusCode }}\",\n    \"error_type\": \"{{ $json.body.error.type }}\"\n  }\n}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        6000,
+        1024
+      ],
+      "id": "7fffc868-f427-4af2-9089-752acf8c932a",
+      "name": "FailedTextAnalisis"
+    }
+  ],
+  "pinData": {
+    "ParseCompetitors": [
+      {
+        "json": {
+          "Country": "UA",
+          "Status": "active",
+          "submittedAt": "2025-12-27T19:46:40.648Z",
+          "Brand": "Autopark.ua  Автопарк",
+          "totalExpected": 1
+        },
+        "pairedItem": {
+          "item": 0
+        }
+      }
+    ]
+  },
+  "connections": {
+    "2": {
+      "main": [
+        [
+          {
+            "node": "ImagesAreReady",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "TriggerApifyFBActor": {
+      "main": [
+        [
+          {
+            "node": "CheckState",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "FailedTrigger",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "BrandWithAds": {
+      "main": [
+        [
+          {
+            "node": "Body",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Carousel&MultiImages",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "NoAds",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format&FilterData": {
+      "main": [
+        [
+          {
+            "node": "BrandWithAds",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "VideoFrame": {
+      "main": [
+        [
+          {
+            "node": "VideoFramePrompt",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "AnalyzeFrame": {
+      "main": [
+        [
+          {
+            "node": "Merge",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Merge": {
+      "main": [
+        [
+          {
+            "node": "GroupFrames",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Switch": {
+      "main": [
+        [
+          {
+            "node": "FetchFBAds",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "CheckState",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Carousel&MultiImages": {
+      "main": [
+        [
+          {
+            "node": "GroupAdCampaigns",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "1.7",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "StaticPictures",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "StaticPictures": {
+      "main": [
+        [
+          {
+            "node": "CloudinaryPicture",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "1.6",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "GetFrame",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "CloudinaryPicture": {
+      "main": [
+        [
+          {
+            "node": "PicturePrompt",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "PromptFotCarousel": {
+      "main": [
+        [
+          {
+            "node": "AnalyzeCarousel",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Regroup": {
+      "main": [
+        [
+          {
+            "node": "PromptFotCarousel",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "SplitForUpload": {
+      "main": [
+        [
+          {
+            "node": "UploadToCloudinary",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "UploadToCloudinary": {
+      "main": [
+        [
+          {
+            "node": "MergeUploadResults",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "MergeUploadResults": {
+      "main": [
+        [
+          {
+            "node": "Regroup",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "GroupAdCampaigns": {
+      "main": [
+        [
+          {
+            "node": "SplitForUpload",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "GroupFrames": {
+      "main": [
+        [
+          {
+            "node": "VideoPrompt",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Body": {
+      "main": [
+        [
+          {
+            "node": "ClaudeText",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "1.2",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "ClaudeText": {
+      "main": [
+        [
+          {
+            "node": "InforceJson",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "FormatResponse": {
+      "main": [
+        [
+          {
+            "node": "SentTextAnalysis",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "1.9",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "VideoFramePrompt": {
+      "main": [
+        [
+          {
+            "node": "Merge",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "AnalyzeFrame",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "1.5",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "GetFrame": {
+      "main": [
+        [
+          {
+            "node": "VideoFrame",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format": {
+      "main": [
+        [
+          {
+            "node": "SendVideoAnalysis",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "1.8",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "CheckState": {
+      "main": [
+        [
+          {
+            "node": "Poll",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Poll": {
+      "main": [
+        [
+          {
+            "node": "Switch",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "PicturePrompt": {
+      "main": [
+        [
+          {
+            "node": "AnalyzePicture",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "VideoPrompt": {
+      "main": [
+        [
+          {
+            "node": "VideoAnalisis",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "VideoAnalisis": {
+      "main": [
+        [
+          {
+            "node": "Format",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "NoAds": {
+      "main": [
+        [
+          {
+            "node": "NoAdsNotification",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "success": {
+      "main": [
+        [
+          {
+            "node": "FormatResponse",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "failure",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "1.2": {
+      "main": [
+        [
+          {
+            "node": "TextualNotification",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "failure": {
+      "main": [
+        [
+          {
+            "node": "1.3",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "1.3": {
+      "main": [
+        [
+          {
+            "node": "FailedTextAnalisis",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "FailedActor": {
+      "main": [
+        [
+          {
+            "node": "ErroredActor",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "FailedFetch": {
+      "main": [
+        [
+          {
+            "node": "ErroredFetch",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "FetchFBAds": {
+      "main": [
+        [
+          {
+            "node": "Format&FilterData",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "FailedFetch",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "InforceJson": {
+      "main": [
+        [
+          {
+            "node": "success",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "AnalyzeCarousel": {
+      "main": [
+        [
+          {
+            "node": "FormatImages",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "error": {
+      "main": [
+        [
+          {
+            "node": "1.4",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "1.4": {
+      "main": [
+        [
+          {
+            "node": "AiFailedError",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "AnalyzePicture": {
+      "main": [
+        [
+          {
+            "node": "FormatImage",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "1.5": {
+      "main": [
+        [
+          {
+            "node": "VideoNotification",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Trigger1": {
+      "main": [
+        [
+          {
+            "node": "ParseCompetitors",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "TriggerNotification",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "FormatImages": {
+      "main": [
+        [
+          {
+            "node": "SentMultiImageAnalisis",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "2",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "FormatImage": {
+      "main": [
+        [
+          {
+            "node": "SentImageAnalisis",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "ImageISReady",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "ErroredActor": {
+      "main": [
+        []
+      ]
+    },
+    "FailedTrigger": {
+      "main": [
+        []
+      ]
+    },
+    "ParseCompetitors": {
+      "main": [
+        [
+          {
+            "node": "TriggerApifyFBActor",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "1.6": {
+      "main": [
+        [
+          {
+            "node": "ImageNotification",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "1.7": {
+      "main": [
+        [
+          {
+            "node": "ImagesNotification",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "1.8": {
+      "main": [
+        [
+          {
+            "node": "VideoIsReady",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "1.9": {
+      "main": [
+        [
+          {
+            "node": "TextIsReady",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "1880af28-364e-4ba8-be92-ebebf9b27f4e",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "-"
+  },
+  "id": "0gGYHdnU9fVATdhC",
+  "tags": []
+}
